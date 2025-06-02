@@ -1,0 +1,20 @@
+{
+  "name": "index_event_smartcontract",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DuongQuyen1309/Index_Event_SmartContract.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/DuongQuyen1309/Index_Event_SmartContract/issues"
+  },
+  "homepage": "https://github.com/DuongQuyen1309/Index_Event_SmartContract#readme",
+  "description": ""
+}
