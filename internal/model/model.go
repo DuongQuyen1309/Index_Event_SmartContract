@@ -30,7 +30,7 @@ type ResponseCreatedEvent struct {
 }
 
 type TempRequestCreatedEvent struct {
-	bun.BaseModel `bun:"table=temp_request_created_events"`
+	bun.BaseModel `bun:"temp_request_created_events"`
 
 	Id              int       `bun:"id,pk,autoincrement"`
 	BlockNumber     int       `bun:"block_number"`

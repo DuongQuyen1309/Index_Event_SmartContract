@@ -21,6 +21,11 @@ func CreateRequestCreatedEvent(DB *bun.DB) error {
 	if err != nil {
 		return err
 	}
+	_, err = DB.NewCreateIndex().Model((*model.RequestCreatedEvent)(nil)).
+		Index("idx_request_owner").Column("request_owner").IfNotExists().Exec(ctx)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -37,4 +42,49 @@ func InsertResquestCreatedDB(log *token.WheelRequestCreated, requestOwner string
 		return err
 	}
 	return nil
+}
+
+func GetTotalTurnAmountOfUser(address string, c context.Context) (int, error) {
+	var amountSum int
+	err := db.DB.NewSelect().Model((*model.RequestCreatedEvent)(nil)).
+		ColumnExpr("SUM(amount)").Where("request_owner = ?", address).Scan(c, &amountSum)
+	if err != nil {
+		return -1, err
+	}
+	return amountSum, nil
+}
+
+func GetTurnsRequestsOfUser(address string, limit int, offset int, c context.Context) ([]model.RequestCreatedEvent, error) {
+	var turns []model.RequestCreatedEvent
+	err := db.DB.NewSelect().Model(&turns).
+		Where("request_owner = ?", address).
+		Offset(offset).Limit(limit).
+		Scan(c)
+	if err != nil {
+		return nil, err
+	}
+	return turns, nil
+}
+
+func GetTurnById(hash string, c context.Context) (model.RequestCreatedEvent, error) {
+	var turn model.RequestCreatedEvent
+	err := db.DB.NewSelect().Model(&turn).
+		Where("transaction_hash = ?", hash).
+		Scan(c)
+	if err != nil {
+		return model.RequestCreatedEvent{}, err
+	}
+	return turn, nil
+}
+
+func GetRequestIDByHash(hash string, c context.Context) (string, error) {
+	var requestId string
+	err := db.DB.NewSelect().Model((*model.RequestCreatedEvent)(nil)).
+		Column("request_id").
+		Where("transaction_hash = ?", hash).
+		Scan(c, &requestId)
+	if err != nil {
+		return "", err
+	}
+	return requestId, nil
 }

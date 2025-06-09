@@ -17,7 +17,7 @@ func CreateResponseCreatedEvent(DB *bun.DB) error {
 		return err
 	}
 	_, err = DB.NewCreateIndex().Model((*model.ResponseCreatedEvent)(nil)).
-		Index("idx_transaction_hash").Column("transaction_hash").Unique().IfNotExists().Exec(ctx)
+		Index("idx_transaction_hash_log_index").Column("transaction_hash", "log_index").Unique().IfNotExists().Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -36,4 +36,14 @@ func InsertResponseCreatedDB(log *token.WheelResponseCreated, prizeIds []int64, 
 		return err
 	}
 	return nil
+}
+func GetPrizesFromRequest(requestId string, c context.Context) ([]int64, error) {
+	var turnRequest model.ResponseCreatedEvent
+	err := db.DB.NewSelect().Model(&turnRequest).
+		Where("request_id = ?", requestId).
+		Scan(c)
+	if err != nil {
+		return nil, err
+	}
+	return turnRequest.PrizesId, nil
 }

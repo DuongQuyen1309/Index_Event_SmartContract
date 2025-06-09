@@ -22,13 +22,23 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-func IndexEvent() error {
+/*
+
+
+Cần đổi sang websocket ở chỗ connectBSCNode:
+wss://bsc-mainnet.nodereal.io/ws/v1/cebf31df832245339f9655fd1a592797
+
+
+
+*/
+
+func IndexEvent(ctx context.Context) error {
 	client, err := ConnectBSCNode("https://bsc-mainnet.nodereal.io/v1/cebf31df832245339f9655fd1a592797")
 	if err != nil {
 		fmt.Println("Error connect BSC node", err)
 		return err
 	}
-	maxCurrentBlockHead, err := client.HeaderByNumber(context.Background(), nil)
+	maxCurrentBlockHead, err := client.HeaderByNumber(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -104,7 +114,6 @@ func IndexEvent() error {
 				return
 			}
 		}(startBlock, endBlock)
-
 		time.Sleep(200 * time.Millisecond)
 		go func(startBlock uint64, endBlock uint64) {
 			defer wg.Done()
@@ -122,7 +131,7 @@ func IndexEvent() error {
 			time.Sleep(10 * time.Second)
 		}
 		mu.Unlock()
-		maxCurrentBlockHead, err = client.HeaderByNumber(context.Background(), nil)
+		maxCurrentBlockHead, err = client.HeaderByNumber(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -179,7 +188,6 @@ func CrawlResponseCreatedInRange(client *ethclient.Client, constractInstance *to
 		}
 		timestamp := time.Unix(int64(header.Time), 0)
 		prizeIds := ConvertBigIntToInt(log.PrizeIds)
-		//phai thu lai xem truy cap tung phan tu trong thuoc tinh dc luu thanh mang ok ko
 		datastore.InsertResponseCreatedDB(log, prizeIds, requestOwner.String(), timestamp)
 	}
 	return nil
