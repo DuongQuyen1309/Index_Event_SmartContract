@@ -38,17 +38,17 @@ func GetTurnsRequestsOfUser(c *gin.Context) {
 	offset := (page - 1) * limit
 	turns, err := datastore.GetTurnsRequestsOfUser(userAddress, limit, offset, c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user address"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, turns)
 }
 
-func GetTurnRequestById(c *gin.Context) {
+func GetTurnRequestByHash(c *gin.Context) {
 	hash := c.Param("hash")
-	turn, err := datastore.GetTurnById(hash, c)
+	turn, err := datastore.GetTurnByHash(hash, c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, turn)

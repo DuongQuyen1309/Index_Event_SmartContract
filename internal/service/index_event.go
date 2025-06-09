@@ -22,84 +22,105 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-/*
-
-
-Cần đổi sang websocket ở chỗ connectBSCNode:
-wss://bsc-mainnet.nodereal.io/ws/v1/cebf31df832245339f9655fd1a592797
-
-
-
-*/
-
 func IndexEvent(ctx context.Context) error {
-	client, err := ConnectBSCNode("https://bsc-mainnet.nodereal.io/v1/cebf31df832245339f9655fd1a592797")
+	httpClient, err := ConnectBSCNode("https://bsc-mainnet.nodereal.io/v1/cebf31df832245339f9655fd1a592797")
 	if err != nil {
 		fmt.Println("Error connect BSC node", err)
 		return err
 	}
-	maxCurrentBlockHead, err := client.HeaderByNumber(ctx, nil)
+	maxCurrentBlockHead, err := httpClient.HeaderByNumber(ctx, nil)
 	if err != nil {
 		return err
 	}
 	maxCurrentBlock := maxCurrentBlockHead.Number.Uint64()
 
-	// var sink = make(chan *token.WheelRequestCreated)
-	// _, err = constractInstance.WatchRequestCreated(&bind.WatchOpts{
-	// 	Context: context.Background(),
-	// 	Start:   &maxCurrentBlock,
-	// }, sink, nil, nil)
-	// if err != nil {
-	// 	fmt.Println("Error watch request created", err)
-	// 	return err
-	// }
-
-	// go func() {
-	// 	for {
-	// 		for newEvent := range sink {
-	// 			header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(newEvent.Raw.BlockNumber)))
-	// 			if err != nil {
-	// 				fmt.Println("Error get header in temp watch request created", err)
-	// 				return
-	// 			}
-	// 			timestamp := time.Unix(int64(header.Time), 0)
-	// 			hash := common.HexToHash(newEvent.Raw.Topics[1].Hex())
-	// 			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-	// 			datastore.InsertTempResquestCreatedDB(newEvent, requestOwner.String(), timestamp)
-	// 		}
-	// 	}
-	// }()
-
-	// go func() {
-	// 	for {
-	// 		var sink = make(chan *token.WheelRequestCreated)
-	// 		_, err := constractInstance.WatchRequestCreated(&bind.WatchOpts{
-	// 			Context: context.Background(),
-	// 			Start:   &maxCurrentBlock,
-	// 		}, sink, nil, nil)
-	// 		if err != nil {
-	// 			fmt.Println("Error watch request created", err)
-	// 			return
-	// 		}
-	// 		for newEvent := range sink {
-	// 			header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(newEvent.Raw.BlockNumber)))
-	// 			if err != nil {
-	// 				fmt.Println("Error get header in temp watch request created", err)
-	// 				return
-	// 			}
-	// 			timestamp := time.Unix(int64(header.Time), 0)
-	// 			hash := common.HexToHash(newEvent.Raw.Topics[1].Hex())
-	// 			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-	// 			datastore.InsertTempResquestCreatedDB(newEvent, requestOwner.String(), timestamp)
-	// 		}
-	// 	}
-	// }()
-
-	constractInstance, err := token.NewWheelFilterer(common.HexToAddress("0x0DF49Ee109bE77DA53d3050575e409D28D542ECC"), client)
+	constractInstance, err := token.NewWheelFilterer(common.HexToAddress("0x0DF49Ee109bE77DA53d3050575e409D28D542ECC"), httpClient)
 	if err != nil {
 		fmt.Println("Error create contract instance", err)
 		return err
 	}
+
+	wssClient, err := ConnectBSCNode("wss://bsc-mainnet.nodereal.io/ws/v1/cebf31df832245339f9655fd1a592797")
+	if err != nil {
+		fmt.Println("Error connect BSC node websocket", err)
+		return err
+	}
+	realtimeConstractInstance, err := token.NewWheelFilterer(common.HexToAddress("0x0DF49Ee109bE77DA53d3050575e409D28D542ECC"), wssClient)
+	if err != nil {
+		fmt.Println("Error create contract instance for realtime", err)
+		return err
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		err = CrawlInPast(constractInstance, httpClient, maxCurrentBlock)
+		if err != nil {
+			fmt.Println("Error crawl in past", err)
+			return
+		}
+	}()
+	go func() {
+		err := WatchRequestCreatedInRealtime(realtimeConstractInstance, wssClient, maxCurrentBlock)
+		if err != nil {
+			fmt.Println("Error watch request created in realtime", err)
+			return
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func WatchResponseCreatedInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+	var sink = make(chan *token.WheelResponseCreated)
+	_, err := realtimeConstractInstance.WatchResponseCreated(&bind.WatchOpts{
+		Context: context.Background(),
+		Start:   &maxCurrentBlock,
+	}, sink, nil, nil)
+	if err != nil {
+		fmt.Println("Error watch request created", err)
+		return err
+	}
+	for event := range sink {
+		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(event.Raw.BlockNumber)))
+		if err != nil {
+			fmt.Println("Error get header by number", err)
+			return err
+		}
+		timestamp := time.Unix(int64(header.Time), 0)
+		hash := common.HexToHash(event.Raw.Topics[1].Hex())
+		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+		prizeIds := ConvertBigIntToInt(event.PrizeIds)
+		datastore.InsertResponseCreatedDB(event, prizeIds, requestOwner.String(), timestamp)
+	}
+	return nil
+}
+
+func WatchRequestCreatedInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+	var sink = make(chan *token.WheelRequestCreated)
+	_, err := realtimeConstractInstance.WatchRequestCreated(&bind.WatchOpts{
+		Context: context.Background(),
+		Start:   &maxCurrentBlock,
+	}, sink, nil, nil)
+	if err != nil {
+		fmt.Println("Error watch request created", err)
+		return err
+	}
+	for event := range sink {
+		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(event.Raw.BlockNumber)))
+		if err != nil {
+			fmt.Println("Error get header by number", err)
+			return err
+		}
+		timestamp := time.Unix(int64(header.Time), 0)
+		hash := common.HexToHash(event.Raw.Topics[1].Hex())
+		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+		datastore.InsertResquestCreatedDB(event, requestOwner.String(), timestamp)
+	}
+	return nil
+}
+
+func CrawlInPast(constractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
 	var startBlock uint64 = 20977112
 	endBlock := startBlock + 100
 	for {
@@ -108,7 +129,7 @@ func IndexEvent(ctx context.Context) error {
 		wg.Add(2)
 		go func(startBlock uint64, endBlock uint64) {
 			defer wg.Done()
-			err = CrawlRequestCreatedInRange(client, constractInstance, startBlock, endBlock)
+			err := CrawlRequestCreatedInRange(client, constractInstance, startBlock, endBlock)
 			if err != nil {
 				fmt.Println("Error crawl event", err)
 				return
@@ -117,7 +138,7 @@ func IndexEvent(ctx context.Context) error {
 		time.Sleep(200 * time.Millisecond)
 		go func(startBlock uint64, endBlock uint64) {
 			defer wg.Done()
-			err = CrawlResponseCreatedInRange(client, constractInstance, startBlock, endBlock)
+			err := CrawlResponseCreatedInRange(client, constractInstance, startBlock, endBlock)
 			if err != nil {
 				fmt.Println("Error Crawl ResponseCreated In Range", err)
 				return
@@ -128,14 +149,9 @@ func IndexEvent(ctx context.Context) error {
 		startBlock = endBlock + 1
 		endBlock = startBlock + 100
 		if endBlock > maxCurrentBlock {
-			time.Sleep(10 * time.Second)
+			endBlock = maxCurrentBlock
 		}
 		mu.Unlock()
-		maxCurrentBlockHead, err = client.HeaderByNumber(ctx, nil)
-		if err != nil {
-			return err
-		}
-		maxCurrentBlock = maxCurrentBlockHead.Number.Uint64()
 	}
 }
 
