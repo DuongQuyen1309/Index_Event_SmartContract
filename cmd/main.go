@@ -21,8 +21,14 @@ func init() {
 func main() {
 	ctx := context.Background()
 	db.ConnectDB()
-	datastore.CreateRequestCreatedEvent(db.DB)
-	datastore.CreateResponseCreatedEvent(db.DB)
+	if err := datastore.CreateRequestCreatedEvent(ctx); err != nil {
+		fmt.Println("Error create request created event table", err)
+		return
+	}
+	if err := datastore.CreateResponseCreatedEvent(ctx); err != nil {
+		fmt.Println("Error create response created event table", err)
+		return
+	}
 	if err := service.IndexEvent(ctx); err != nil {
 		fmt.Println("Error index event", err)
 		return

@@ -22,6 +22,10 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+var (
+	wg sync.WaitGroup
+)
+
 func IndexEvent(ctx context.Context) error {
 	httpClient, err := ConnectBSCNode("https://bsc-mainnet.nodereal.io/v1/cebf31df832245339f9655fd1a592797")
 	if err != nil {
@@ -50,9 +54,10 @@ func IndexEvent(ctx context.Context) error {
 		fmt.Println("Error create contract instance for realtime", err)
 		return err
 	}
-	var wg sync.WaitGroup
+
 	wg.Add(2)
 	go func() {
+		defer wg.Done()
 		err = CrawlInPast(constractInstance, httpClient, maxCurrentBlock)
 		if err != nil {
 			fmt.Println("Error crawl in past", err)
@@ -60,12 +65,39 @@ func IndexEvent(ctx context.Context) error {
 		}
 	}()
 	go func() {
-		err := WatchRequestCreatedInRealtime(realtimeConstractInstance, wssClient, maxCurrentBlock)
+		defer wg.Done()
+		err := WatchEventInRealtime(realtimeConstractInstance, httpClient, wssClient, maxCurrentBlock)
+		if err != nil {
+			fmt.Println("Error watch in realtime", err)
+			return
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
+}
+func WatchEventInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, wssClient *ethclient.Client, maxCurrentBlock uint64) error {
+	wg.Add(2)
+	var err error
+	go func() {
+		defer wg.Done()
+		err = WatchRequestCreatedInRealtime(realtimeConstractInstance, client, maxCurrentBlock)
 		if err != nil {
 			fmt.Println("Error watch request created in realtime", err)
 			return
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		err = WatchResponseCreatedInRealtime(realtimeConstractInstance, wssClient, maxCurrentBlock)
+		if err != nil {
+			fmt.Println("Error watch request created in realtime", err)
+			return
+		}
+	}()
+	wg.Wait()
 	if err != nil {
 		return err
 	}
