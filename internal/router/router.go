@@ -7,8 +7,8 @@ import (
 
 func SetupRouer() *gin.Engine {
 	router := gin.Default()
-	router.GET("/users/:address/turn-amount", handler.GetTotalTurnAmountOfUser)
-	router.GET("/users/:address/turn-requests", handler.GetTurnsRequestsOfUser)
+	router.GET("/user/:address/turn-amount", handler.GetTotalTurnAmountOfUser)
+	router.GET("/user/:address/turn-requests", handler.GetTurnsRequestsOfUser)
 	router.GET("/turn-request/:hash", handler.GetTurnRequestByHash)
 	router.GET("/turn-request/:hash/prizes", handler.GetPrizesOfHash)
 	return router

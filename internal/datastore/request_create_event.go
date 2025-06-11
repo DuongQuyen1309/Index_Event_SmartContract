@@ -44,7 +44,9 @@ func InsertResquestCreatedDB(log *token.WheelRequestCreated, requestOwner string
 func GetTotalTurnAmountOfUser(address string, c context.Context) (int, error) {
 	var amountSum int
 	err := db.DB.NewSelect().Model((*model.RequestCreatedEvent)(nil)).
-		ColumnExpr("SUM(amount)").Where("request_owner = ?", address).Scan(c, &amountSum)
+		ColumnExpr("SUM(amount)").
+		Where("request_owner = ?", address).
+		Scan(c, &amountSum)
 	if err != nil {
 		return -1, err
 	}

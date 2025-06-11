@@ -27,6 +27,7 @@ var (
 )
 
 func IndexEvent(ctx context.Context) error {
+	//client để crawl các event trong quá khứ
 	httpClient, err := ConnectBSCNode("https://bsc-mainnet.nodereal.io/v1/cebf31df832245339f9655fd1a592797")
 	if err != nil {
 		fmt.Println("Error connect BSC node", err)
@@ -37,18 +38,19 @@ func IndexEvent(ctx context.Context) error {
 		return err
 	}
 	maxCurrentBlock := maxCurrentBlockHead.Number.Uint64()
-
+	//constractInstance để crawl các event trong quá khứ
 	constractInstance, err := token.NewWheelFilterer(common.HexToAddress("0x0DF49Ee109bE77DA53d3050575e409D28D542ECC"), httpClient)
 	if err != nil {
 		fmt.Println("Error create contract instance", err)
 		return err
 	}
-
+	//client để sử dụng websocket để watch các event realtime
 	wssClient, err := ConnectBSCNode("wss://bsc-mainnet.nodereal.io/ws/v1/cebf31df832245339f9655fd1a592797")
 	if err != nil {
 		fmt.Println("Error connect BSC node websocket", err)
 		return err
 	}
+	//constractInstance để gọi watch event realtime
 	realtimeConstractInstance, err := token.NewWheelFilterer(common.HexToAddress("0x0DF49Ee109bE77DA53d3050575e409D28D542ECC"), wssClient)
 	if err != nil {
 		fmt.Println("Error create contract instance for realtime", err)
@@ -58,7 +60,8 @@ func IndexEvent(ctx context.Context) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		err = CrawlInPast(constractInstance, httpClient, maxCurrentBlock)
+		pastTime, cancel := context.WithCancel(ctx)
+		err = CrawlInPast(pastTime, cancel, constractInstance, httpClient, maxCurrentBlock)
 		if err != nil {
 			fmt.Println("Error crawl in past", err)
 			return
@@ -66,124 +69,150 @@ func IndexEvent(ctx context.Context) error {
 	}()
 	go func() {
 		defer wg.Done()
-		err := WatchEventInRealtime(realtimeConstractInstance, httpClient, wssClient, maxCurrentBlock)
-		if err != nil {
-			fmt.Println("Error watch in realtime", err)
-			return
-		}
+		realTime, cancel := context.WithCancel(ctx)
+		WatchEventInRealtime(realTime, cancel, realtimeConstractInstance, httpClient, wssClient, maxCurrentBlock)
 	}()
-	if err != nil {
-		return err
-	}
 	wg.Wait()
 	return nil
 }
-func WatchEventInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, wssClient *ethclient.Client, maxCurrentBlock uint64) error {
+func WatchEventInRealtime(realTime context.Context, cancel context.CancelFunc, realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, wssClient *ethclient.Client, maxCurrentBlock uint64) {
+	errChan := make(chan error, 2)
 	wg.Add(2)
-	var err error
 	go func() {
 		defer wg.Done()
-		err = WatchRequestCreatedInRealtime(realtimeConstractInstance, client, maxCurrentBlock)
+		err := WatchRequestCreatedInRealtime(realTime, realtimeConstractInstance, client, maxCurrentBlock)
 		if err != nil {
+			errChan <- err
 			fmt.Println("Error watch request created in realtime", err)
 			return
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		err = WatchResponseCreatedInRealtime(realtimeConstractInstance, wssClient, maxCurrentBlock)
+		err := WatchResponseCreatedInRealtime(realTime, realtimeConstractInstance, wssClient, maxCurrentBlock)
 		if err != nil {
+			errChan <- err
 			fmt.Println("Error watch request created in realtime", err)
 			return
 		}
 	}()
-	wg.Wait()
-	if err != nil {
-		return err
+	select {
+	case <-realTime.Done():
+		cancel()
+	case err := <-errChan:
+		fmt.Println("Error in watching event", err)
+		cancel()
 	}
-	return nil
+	wg.Wait()
 }
-func WatchResponseCreatedInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+func WatchResponseCreatedInRealtime(realTime context.Context, realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
 	var sink = make(chan *token.WheelResponseCreated)
 	_, err := realtimeConstractInstance.WatchResponseCreated(&bind.WatchOpts{
-		Context: context.Background(),
+		Context: realTime,
 		Start:   &maxCurrentBlock,
 	}, sink, nil, nil)
 	if err != nil {
 		fmt.Println("Error watch request created", err)
 		return err
 	}
-	for event := range sink {
-		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(event.Raw.BlockNumber)))
-		if err != nil {
-			fmt.Println("Error get header by number", err)
-			return err
+	for {
+		select {
+		case <-realTime.Done():
+			return realTime.Err()
+		case event, ok := <-sink:
+			if !ok {
+				err := fmt.Errorf("event channel closed in realtime watch")
+				fmt.Println(err)
+				return err
+			}
+			header, err := client.HeaderByNumber(realTime, big.NewInt(int64(event.Raw.BlockNumber)))
+			if err != nil {
+				fmt.Println("Error get header by number", err)
+				return err
+			}
+			timestamp := time.Unix(int64(header.Time), 0)
+			hash := common.HexToHash(event.Raw.Topics[1].Hex())
+			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+			prizeIds := ConvertBigIntToInt(event.PrizeIds)
+			datastore.InsertResponseCreatedDB(event, prizeIds, requestOwner.String(), timestamp)
 		}
-		timestamp := time.Unix(int64(header.Time), 0)
-		hash := common.HexToHash(event.Raw.Topics[1].Hex())
-		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-		prizeIds := ConvertBigIntToInt(event.PrizeIds)
-		datastore.InsertResponseCreatedDB(event, prizeIds, requestOwner.String(), timestamp)
 	}
-	return nil
 }
 
-func WatchRequestCreatedInRealtime(realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+func WatchRequestCreatedInRealtime(realTime context.Context, realtimeConstractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
 	var sink = make(chan *token.WheelRequestCreated)
 	_, err := realtimeConstractInstance.WatchRequestCreated(&bind.WatchOpts{
-		Context: context.Background(),
+		Context: realTime,
 		Start:   &maxCurrentBlock,
 	}, sink, nil, nil)
 	if err != nil {
 		fmt.Println("Error watch request created", err)
 		return err
 	}
-	for event := range sink {
-		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(event.Raw.BlockNumber)))
-		if err != nil {
-			fmt.Println("Error get header by number", err)
-			return err
+	for {
+		select {
+		case <-realTime.Done():
+			return realTime.Err()
+		case event, ok := <-sink:
+			if !ok {
+				err := fmt.Errorf("event channel closed in realtime watch")
+				fmt.Println(err)
+				return err
+			}
+			header, err := client.HeaderByNumber(realTime, big.NewInt(int64(event.Raw.BlockNumber)))
+			if err != nil {
+				fmt.Println("Error get header by number", err)
+				return err
+			}
+			timestamp := time.Unix(int64(header.Time), 0)
+			hash := common.HexToHash(event.Raw.Topics[1].Hex())
+			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+			datastore.InsertResquestCreatedDB(event, requestOwner.String(), timestamp)
 		}
-		timestamp := time.Unix(int64(header.Time), 0)
-		hash := common.HexToHash(event.Raw.Topics[1].Hex())
-		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-		datastore.InsertResquestCreatedDB(event, requestOwner.String(), timestamp)
 	}
-	return nil
 }
 
-func CrawlInPast(constractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+func CrawlInPast(pastTime context.Context, cancel context.CancelFunc, constractInstance *token.WheelFilterer, client *ethclient.Client, maxCurrentBlock uint64) error {
+	errChan := make(chan error, 2)
 	var startBlock uint64 = 20977112
 	endBlock := startBlock + 100
 	for {
-		var wg sync.WaitGroup
-		var mu sync.Mutex
+		// var mu sync.Mutex
 		wg.Add(2)
 		go func(startBlock uint64, endBlock uint64) {
 			defer wg.Done()
-			err := CrawlRequestCreatedInRange(client, constractInstance, startBlock, endBlock)
+			err := CrawlRequestCreatedInRange(pastTime, client, constractInstance, startBlock, endBlock)
 			if err != nil {
-				fmt.Println("Error crawl event", err)
+				errChan <- err
+				fmt.Println("Error crawl request created", err)
 				return
 			}
 		}(startBlock, endBlock)
 		time.Sleep(200 * time.Millisecond)
 		go func(startBlock uint64, endBlock uint64) {
 			defer wg.Done()
-			err := CrawlResponseCreatedInRange(client, constractInstance, startBlock, endBlock)
+			err := CrawlResponseCreatedInRange(pastTime, client, constractInstance, startBlock, endBlock)
 			if err != nil {
-				fmt.Println("Error Crawl ResponseCreated In Range", err)
+				errChan <- err
+				fmt.Println("Error crawl response created", err)
 				return
 			}
 		}(startBlock, endBlock)
+		select {
+		case <-pastTime.Done():
+			cancel()
+		case err := <-errChan:
+			fmt.Println("Error in watching event", err)
+			cancel()
+		}
 		wg.Wait()
-		mu.Lock()
+		// mu.Lock()
 		startBlock = endBlock + 1
 		endBlock = startBlock + 100
 		if endBlock > maxCurrentBlock {
 			endBlock = maxCurrentBlock
 		}
-		mu.Unlock()
+		// mu.Unlock()
 	}
 }
 
@@ -195,48 +224,60 @@ func ConnectBSCNode(rpcUrl string) (*ethclient.Client, error) {
 	return client, nil
 }
 
-func CrawlRequestCreatedInRange(client *ethclient.Client, constractInstance *token.WheelFilterer, startBlock uint64, endBlock uint64) error {
+func CrawlRequestCreatedInRange(pastTime context.Context, client *ethclient.Client, constractInstance *token.WheelFilterer, startBlock uint64, endBlock uint64) error {
 	iter, err := constractInstance.FilterRequestCreated(&bind.FilterOpts{
-		Start: startBlock,
-		End:   &endBlock,
+		Start:   startBlock,
+		End:     &endBlock,
+		Context: pastTime,
 	}, nil, nil)
 	if err != nil {
 		fmt.Println("Error filter event", err)
 		return err
 	}
-	for iter.Next() {
-		log := iter.Event
-		hash := common.HexToHash(log.Raw.Topics[1].Hex())
-		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(log.Raw.BlockNumber)))
-		if err != nil {
-			return err
+	select {
+	case <-pastTime.Done():
+		return pastTime.Err()
+	default:
+		for iter.Next() {
+			log := iter.Event
+			hash := common.HexToHash(log.Raw.Topics[1].Hex())
+			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+			header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(log.Raw.BlockNumber)))
+			if err != nil {
+				return err
+			}
+			timestamp := time.Unix(int64(header.Time), 0)
+			datastore.InsertResquestCreatedDB(log, requestOwner.String(), timestamp)
 		}
-		timestamp := time.Unix(int64(header.Time), 0)
-		datastore.InsertResquestCreatedDB(log, requestOwner.String(), timestamp)
 	}
 	return nil
 }
-func CrawlResponseCreatedInRange(client *ethclient.Client, constractInstance *token.WheelFilterer, startBlock uint64, endBlock uint64) error {
+func CrawlResponseCreatedInRange(pastTime context.Context, client *ethclient.Client, constractInstance *token.WheelFilterer, startBlock uint64, endBlock uint64) error {
 	iter, err := constractInstance.FilterResponseCreated(&bind.FilterOpts{
-		Start: startBlock,
-		End:   &endBlock,
+		Start:   startBlock,
+		End:     &endBlock,
+		Context: pastTime,
 	}, nil, nil)
 	if err != nil {
 		fmt.Println("Error filter event", err)
 		return err
 	}
-	for iter.Next() {
-		log := iter.Event
-		hash := common.HexToHash(log.Raw.Topics[1].Hex())
-		requestOwner := common.BytesToAddress(hash.Bytes()[12:])
-		header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(log.Raw.BlockNumber)))
-		if err != nil {
-			return err
+	select {
+	case <-pastTime.Done():
+		return pastTime.Err()
+	default:
+		for iter.Next() {
+			log := iter.Event
+			hash := common.HexToHash(log.Raw.Topics[1].Hex())
+			requestOwner := common.BytesToAddress(hash.Bytes()[12:])
+			header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(log.Raw.BlockNumber)))
+			if err != nil {
+				return err
+			}
+			timestamp := time.Unix(int64(header.Time), 0)
+			prizeIds := ConvertBigIntToInt(log.PrizeIds)
+			datastore.InsertResponseCreatedDB(log, prizeIds, requestOwner.String(), timestamp)
 		}
-		timestamp := time.Unix(int64(header.Time), 0)
-		prizeIds := ConvertBigIntToInt(log.PrizeIds)
-		datastore.InsertResponseCreatedDB(log, prizeIds, requestOwner.String(), timestamp)
 	}
 	return nil
 }
