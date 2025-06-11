@@ -40,7 +40,7 @@ func InsertResponseCreatedDB(log *token.WheelResponseCreated, prizeIds []int64, 
 	}
 	return nil
 }
-func GetPrizesFromRequest(requestId string, c context.Context) ([]int64, error) {
+func GetPrizesFromRequest(requestId string, c context.Context) (*[]int64, error) {
 	var turnRequest model.ResponseCreatedEvent
 	err := db.DB.NewSelect().Model(&turnRequest).
 		Where("request_id = ?", requestId).
@@ -48,5 +48,5 @@ func GetPrizesFromRequest(requestId string, c context.Context) ([]int64, error) 
 	if err != nil {
 		return nil, err
 	}
-	return turnRequest.PrizesId, nil
+	return &turnRequest.PrizesId, nil
 }

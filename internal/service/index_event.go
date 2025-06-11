@@ -249,6 +249,7 @@ func CrawlRequestCreatedInRange(pastTime context.Context, client *ethclient.Clie
 			timestamp := time.Unix(int64(header.Time), 0)
 			datastore.InsertResquestCreatedDB(log, requestOwner.String(), timestamp)
 		}
+		break
 	}
 	return nil
 }
@@ -278,6 +279,7 @@ func CrawlResponseCreatedInRange(pastTime context.Context, client *ethclient.Cli
 			prizeIds := ConvertBigIntToInt(log.PrizeIds)
 			datastore.InsertResponseCreatedDB(log, prizeIds, requestOwner.String(), timestamp)
 		}
+		break
 	}
 	return nil
 }

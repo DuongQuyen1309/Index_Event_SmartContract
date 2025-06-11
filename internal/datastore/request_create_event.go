@@ -53,7 +53,7 @@ func GetTotalTurnAmountOfUser(address string, c context.Context) (int, error) {
 	return amountSum, nil
 }
 
-func GetTurnsRequestsOfUser(address string, limit int, offset int, c context.Context) ([]model.RequestCreatedEvent, error) {
+func GetTurnsRequestsOfUser(address string, limit int, offset int, c context.Context) (*[]model.RequestCreatedEvent, error) {
 	var turns []model.RequestCreatedEvent
 	err := db.DB.NewSelect().Model(&turns).
 		Where("request_owner = ?", address).
@@ -62,18 +62,18 @@ func GetTurnsRequestsOfUser(address string, limit int, offset int, c context.Con
 	if err != nil {
 		return nil, err
 	}
-	return turns, nil
+	return &turns, nil
 }
 
-func GetTurnByHash(hash string, c context.Context) (model.RequestCreatedEvent, error) {
+func GetTurnByHash(hash string, c context.Context) (*model.RequestCreatedEvent, error) {
 	var turn model.RequestCreatedEvent
 	err := db.DB.NewSelect().Model(&turn).
 		Where("transaction_hash = ?", hash).
 		Scan(c)
 	if err != nil {
-		return model.RequestCreatedEvent{}, err
+		return nil, err
 	}
-	return turn, nil
+	return &turn, nil
 }
 
 func GetRequestIDByHash(hash string, c context.Context) (string, error) {

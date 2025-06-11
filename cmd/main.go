@@ -7,7 +7,8 @@ import (
 	"github.com/DuongQuyen1309/indexevent/internal/datastore"
 	"github.com/DuongQuyen1309/indexevent/internal/db"
 	"github.com/DuongQuyen1309/indexevent/internal/router"
-	"github.com/DuongQuyen1309/indexevent/internal/service"
+
+	// "github.com/DuongQuyen1309/indexevent/internal/service"
 
 	"github.com/joho/godotenv"
 )
@@ -29,10 +30,10 @@ func main() {
 		fmt.Println("Error create response created event table", err)
 		return
 	}
-	if err := service.IndexEvent(ctx); err != nil {
-		fmt.Println("Error index event", err)
-		return
-	}
+	// if err := service.IndexEvent(ctx); err != nil {
+	// 	fmt.Println("Error index event", err)
+	// 	return
+	// }
 	router := router.SetupRouer()
 	router.Run(":8080")
 }
